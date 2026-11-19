@@ -1,0 +1,93 @@
+{
+  "01_61-ФЗ_2010": [],
+  "02_488-ФЗ_2014": [],
+  "03_ПП_719_2015": [],
+  "04_ПП_1875_2024": [],
+  "05_ПП_1392_2025": [],
+  "06_ПП_1462_2025": [
+    {
+      "url": "http://government.ru/docs/all/161089/",
+      "error": "('Connection aborted.', ConnectionResetError(10054, 'Удаленный хост принудительно разорвал существующее подключение', None, 10054, None))"
+    }
+  ],
+  "07_ПП_969_2026": [
+    {
+      "url": "http://publication.pravo.gov.ru/document/0001202608060024",
+      "file": "Официальная_карточка_1.html",
+      "kind": "карточка"
+    },
+    {
+      "url": "http://publication.pravo.gov.ru/file/pdf?eoNumber=0001202608060024",
+      "file": "Официальный_текст_1_1.pdf",
+      "kind": "pdf",
+      "bytes": 3239101
+    }
+  ],
+  "08_331-ФЗ_2026": [
+    {
+      "url": "http://publication.pravo.gov.ru/document/0001202608040074",
+      "file": "Официальная_карточка_1.html",
+      "kind": "карточка"
+    },
+    {
+      "url": "http://publication.pravo.gov.ru/file/pdf?eoNumber=0001202608040074",
+      "file": "Официальный_текст_1_1.pdf",
+      "kind": "pdf",
+      "bytes": 1323234
+    }
+  ],
+  "09_Приказ_4746_2026": [
+    {
+      "url": "http://publication.pravo.gov.ru/document/0001202609210008",
+      "file": "Официальная_карточка_1.html",
+      "kind": "карточка"
+    },
+    {
+      "url": "http://publication.pravo.gov.ru/file/pdf?eoNumber=0001202609210008",
+      "file": "Официальный_текст_1_1.pdf",
+      "kind": "pdf",
+      "bytes": 1729043
+    }
+  ],
+  "10_ПП_1283_2026": [
+    {
+      "url": "http://publication.pravo.gov.ru/document/0001202610020023",
+      "file": "Официальная_карточка_1.html",
+      "kind": "карточка"
+    },
+    {
+      "url": "http://publication.pravo.gov.ru/file/pdf?eoNumber=0001202610020023",
+      "file": "Официальный_текст_1_1.pdf",
+      "kind": "pdf",
+      "bytes": 400652
+    }
+  ],
+  "11_44-ФЗ_2013": [],
+  "12_223-ФЗ_2011": [],
+  "13_ПП_879_2025": [],
+  "14_ПП_1847_2020": [],
+  "15_Приказ_33_2026": [],
+  "16_ЕЭК_90_2025": [
+    {
+      "url": "https://docs.eaeunion.org/documents/446/10221/",
+      "file": "Официальная_карточка_1.html",
+      "kind": "карточка"
+    },
+    {
+      "url": "https://docs.eaeunion.org/upload/iblock/420/i8dpyy0mcgqejrn7a1mu8o5dyqbwcye8/Reshenie-Kollegii-_-90-ot-7-oktyabrya-2025-goda.pdf",
+      "file": "Официальный_текст_1_1.pdf",
+      "kind": "pdf",
+      "bytes": 2297184
+    },
+    {
+      "url": "https://docs.eaeunion.org/upload/iblock/9de/teq7u9xbabbp1t1163vdjdw09vmr18q1/Skachat-v-word.zip",
+      "file": "Официальный_текст_1_2.zip",
+      "kind": "zip",
+      "bytes": 535273,
+      "members": [
+        "Åα¿½«ªÑ¡¿Ñ.docx",
+        "ÉÑΦÑ¡¿Ñ è«½½Ñú¿¿ ⁿ 90 «Γ 7 «¬Γ∩íα∩ 2025 ú«ñá.docx"
+      ]
+    }
+  ]
+}
