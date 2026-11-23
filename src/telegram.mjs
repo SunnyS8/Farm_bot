@@ -4,6 +4,7 @@ import { WorkQueue } from './security.mjs';
 import { loadCorpus, search } from './retrieval.mjs';
 import { generate, DISCLAIMER } from './adapters.mjs';
 import { answerActStructure } from './legal-answers.mjs';
+import { createConversationMemory } from './conversation.mjs';
 
 export const GREETING = `Привет! Помогу разобраться с нормативной базой Эском по локальному сбору.
 
@@ -97,18 +98,26 @@ export function telegramClient(c, { transport = fetch, signal, readOnly = false 
 }
 
 export function makeTelegramQueue(c, corpus, { api, llmTransport = fetch, signal,
-  onError = () => {} } = {}) {
+  onError = () => {}, conversation = createConversationMemory() } = {}) {
   if (c.mode !== 'live' || (c.accessMode !== 'public' && !c.allowed.length)) throw new Error('telegram_live_required');
   return new WorkQueue(async job => {
     if (signal?.aborted || !permits(c, job.sender)) return;
     let answer;
-    if (job.question === '/start') answer = GREETING;
+    if (job.question === '/start') {
+      conversation.clear(job.sender);
+      answer = GREETING;
+    }
+    else if (job.question === '/reset') {
+      conversation.clear(job.sender);
+      answer = 'Контекст диалога очищен. Укажите номер акта и задайте новый вопрос.';
+    }
     else if (job.question.startsWith('/')) answer = 'Напишите нормативный вопрос текстом, например номер акта и статью.';
     else {
-      answer = answerActStructure(corpus.chunks, job.question);
+      const contextualQuestion = conversation.contextualize(job.sender, job.question);
+      answer = answerActStructure(corpus.chunks, contextualQuestion);
       if (!answer) {
-        const sources = search(corpus.chunks, job.question);
-        answer = await generate(c.llm, job.question, sources, llmTransport,
+        const sources = search(corpus.chunks, contextualQuestion);
+        answer = await generate(c.llm, contextualQuestion, sources, llmTransport,
           diagnostic => { if (diagnostic.reason !== 'grounded') console.error(`telegram_llm_${diagnostic.reason}`); },
           { publicSources: c.accessMode === 'public' });
       }
