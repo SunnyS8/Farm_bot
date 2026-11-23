@@ -39,6 +39,14 @@ test('ungrounded claims are dropped while grounded claims survive', () => {
   assert.ok(!renderAnswer(mixed, source(body)).includes('Выдуманная выдержка'));
 });
 
+test('absence claim requires an exact quote that itself states absence', () => {
+  const quote = 'Редакция документа установлена по состоянию на первое января текущего года.';
+  const unsupported = JSON.stringify({ claims: [{
+    text: 'В документе отсутствует нужная информация.', sourceId: 'S1', quote,
+  }] });
+  assert.equal(inspectAnswer(unsupported, source(quote)).reason, 'unsupported_absence');
+});
+
 test('multiline matching is continuous and maps UTF-16 indexes including an astral prefix', () => {
   const original = body.replace('не вступает', 'не\r\n \tвступает').replace('за исключением', 'за\n\nисключением');
   const full = '📚 Вводный текст:\r\n' + original + '\r\nКонец';

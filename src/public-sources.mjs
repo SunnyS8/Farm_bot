@@ -9,7 +9,7 @@ export function containsLocalReference(text, sources) {
 
 export function officialLinks(text) {
   const allowed = new Set(['publication.pravo.gov.ru', 'pravo.gov.ru', 'government.ru',
-    'docs.eaeunion.org', 'eec.eaeunion.org']);
+    'docs.eaeunion.org', 'eec.eaeunion.org', 'gisp.gov.ru']);
   const result = [];
   for (const match of text.matchAll(/https?:\/\/[^\s<>"\[\]]+/gu)) {
     try {

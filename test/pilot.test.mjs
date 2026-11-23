@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { configuration, VAULT_ROOT } from '../src/config.mjs';
 import { authorize, decodeBody, WorkQueue } from '../src/security.mjs';
 import { chunksOf, search, textOf, within, sourceLink } from '../src/retrieval.mjs';
-import { DISCLAIMER, REFUSAL, messagesFor, renderAnswer, generate, send } from '../src/adapters.mjs';
+import { DISCLAIMER, REFUSAL, messagesFor, renderAnswer, generate, generateCompound, send } from '../src/adapters.mjs';
 import { createServer } from '../src/server.mjs';
 
 const c = configuration({
@@ -207,7 +207,7 @@ test('upstream failures, invalid/oversized answers fail closed; deadlines suppli
     '835', 'answer', async () => new Response('{"error":"APP_ID_ERROR"}')), /bitrix_send_failed/);
 });
 
-test('Hubris example uses full endpoint, explicitly approved mini model, empty key and offline mode', async () => {
+test('Hubris example uses full endpoint, explicitly approved inexpensive model, empty key and offline mode', async () => {
   const example = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
   const env = Object.fromEntries(example.split(/\r?\n/).filter(line =>
     line && !line.startsWith('#')).map(line => {
@@ -218,7 +218,7 @@ test('Hubris example uses full endpoint, explicitly approved mini model, empty k
   assert.equal(cfg.provider, 'Hubris');
   assert.equal(cfg.protocol, 'openai-chat-completions');
   assert.equal(cfg.endpoint, 'https://api.hubris.pw/v1/chat/completions');
-  assert.equal(cfg.model, 'dots-studio/dots-3-note-preview:free');
+  assert.equal(cfg.model, 'openai/gpt-4o-mini');
   assert.equal(cfg.apiKey, '');
   assert.equal(cfg.maxTokens, 1400);
 });
@@ -235,4 +235,26 @@ test('Hubris errors never trigger model fallback or a second request', async () 
     return new Response('{"error":"model_unavailable"}', { status: 503 });
   }));
   assert.equal(calls, 1);
+});
+
+test('compound legal question gets one grounded claim per act without fallback', async () => {
+  const quoteA = 'Первый нормативный акт содержит подтверждённое требование для проверки товара.';
+  const quoteB = 'Второй нормативный акт устанавливает подтверждение номером реестровой записи.';
+  const compoundSources = [
+    { sourceId: 'S1', file: 'Законы/Акт-А/Текст.html', start: 1, end: 2, text: quoteA },
+    { sourceId: 'S2', file: 'Постановления/Акт-Б/Текст.html', start: 1, end: 2, text: quoteB },
+  ];
+  let calls = 0;
+  const answer = await generateCompound({ ...c, mode: 'live' }, 'Сопоставь два акта', compoundSources,
+    async (_url, options) => {
+      calls++;
+      const sourceId = JSON.parse(options.body).messages[1].content.includes('S1') ? 'S1' : 'S2';
+      const quote = sourceId === 'S1' ? quoteA : quoteB;
+      return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: {
+        content: JSON.stringify({ claims: [{ text: `Вывод ${sourceId}`, sourceId, quote }] }),
+      } }] }));
+    });
+  assert.equal(calls, 2);
+  assert.match(answer, /Вывод S1/);
+  assert.match(answer, /Вывод S2/);
 });

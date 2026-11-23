@@ -15,6 +15,31 @@ export function lawIds(text) {
     .map(match => `${match[1]}-${match[2]}`))];
 }
 
+export function governmentDecisionIds(text) {
+  const normalized = normalize(text);
+  const compact = [...normalized.matchAll(
+    /(?<![\p{L}\d])пп(?:\s+рф)?(?:\s*(?:№|no\.?))?[\s_-]*(\d{1,6})(?![\p{L}\d])/gu,
+  )].map(match => `пп-${match[1]}`);
+  const chained = [...normalized.matchAll(
+    /(?<![\p{L}\d])пп(?:\s+рф)?\s*(?:№|no\.?)?\s*\d{1,6}\s+(?:и|,)\s*(?:№|no\.?)\s*(\d{1,6})(?!\d)/gu,
+  )].map(match => `пп-${match[1]}`);
+  const full = [...normalized.matchAll(
+    /постановлен\p{L}*\s+правительств\p{L}*(?:\s+российской\s+федерации|\s+рф)?[\s\S]{0,80}?(?:№|no\.?)\s*(\d{1,6})(?!\d)/gu,
+  )].map(match => `пп-${match[1]}`);
+  return [...new Set([...compact, ...chained, ...full])];
+}
+
+export function actIds(text) {
+  return [...new Set([...lawIds(text), ...governmentDecisionIds(text)])];
+}
+
+function folderActIds(folder) {
+  const normalized = normalize(folder);
+  const decisions = [...normalized.matchAll(/(?:^|[/_])пп[_-]*(\d{1,6})(?=[/_]|$)/gu)]
+    .map(match => `пп-${match[1]}`);
+  return [...new Set([...lawIds(folder), ...decisions])];
+}
+
 function timingScore(text) {
   const t = normalize(text).replace(/\s+/g, ' ');
   let score = 0;
@@ -22,6 +47,19 @@ function timingScore(text) {
   if (/настоящий федеральный (?:конституционный )?закон вступает в силу/u.test(t)) score += 120;
   if (/за исключением/u.test(t) && score) score += 30;
   if (/статус:/.test(t) && /вступ/u.test(t)) score += 15;
+  return score;
+}
+
+function topicScore(question, text) {
+  const q = normalize(question);
+  const t = normalize(text).replace(/\s+/g, ' ');
+  let score = 0;
+  if (q.includes('ррпп') || q.includes('реестр российской промышленной продукции')) {
+    if (t.includes('реестр российской промышленной продукции')) score += 300;
+    if (t.includes('реестровой записи')) score += 160;
+    if (/включен\p{L}*\s+в\s+реестр российской промышленной продукции/u.test(t)) score += 100;
+    if (t.includes('реестр независимых гарантий')) score -= 300;
+  }
   return score;
 }
 
@@ -100,8 +138,8 @@ export async function loadCorpus() {
 }
 
 export function search(chunks, question) {
-  const ids = lawIds(question);
-  if (ids.length) return searchLaws(chunks, question, ids);
+  const ids = actIds(question);
+  if (ids.length) return searchActs(chunks, question, ids);
   const terms = tokens(question).slice(0, 24);
   if (!terms.length) return [];
   const minimum = terms.length >= 3 ? 2 : terms.length;
@@ -120,8 +158,8 @@ export function search(chunks, question) {
   return selected;
 }
 
-function searchLaws(chunks, question, ids) {
-  if (ids.length > 2) return []; // Too many acts for four grounded fragments: request clarification.
+function searchActs(chunks, question, ids) {
+  if (ids.length > 3) return []; // Keep cross-document context bounded.
   // Only an explicit date of the act disambiguates its year. A question such as
   // "вступит ли ... в 2027 году" must not mistake the commencement year for publication year.
   const years = [...normalize(question).matchAll(
@@ -130,33 +168,37 @@ function searchLaws(chunks, question, ids) {
   const folders = [...new Set(chunks.map(c => c.file.split('/').slice(0, 2).join('/')))];
   const selectedFolders = [];
   for (const act of ids) {
-    let matches = folders.filter(folder => lawIds(folder).includes(act));
+    let matches = folders.filter(folder => folderActIds(folder).includes(act));
     if (years.length) matches = matches.filter(folder => years.some(year => folder.includes(year)));
     // Never silently pick between same-number acts from different years or cross-references.
     if (matches.length !== 1) return [];
     selectedFolders.push(matches[0]);
   }
   const timing = /вступ\p{L}*[\s\S]{0,25}силу|когда[\s\S]{0,25}действ|срок/iu.test(question);
-  const terms = tokens(question).filter(term => !ids.includes(term) && !years.includes(term)).slice(0, 24);
+  const actNumbers = ids.map(id => id.split('-').at(-1));
+  const terms = tokens(question).filter(term => !ids.includes(term) &&
+    !actNumbers.includes(term) && !years.includes(term)).slice(0, 24);
   const selected = [], seen = new Set();
+  const limit = ids.length === 3 ? 6 : 4;
   function add(chunk) {
-    if (!chunk || seen.has(chunk.text) || selected.length >= 4) return;
+    if (!chunk || seen.has(chunk.text) || selected.length >= limit) return;
     seen.add(chunk.text); selected.push({ ...chunk, sourceId: `S${selected.length + 1}` });
   }
   for (const folder of selectedFolders) {
     const owned = chunks.filter(c => c.file.startsWith(`${folder}/`) && c.text.length >= 60);
     const score = c => {
       const text = normalize(c.text);
-      return terms.filter(term => text.includes(term)).length * 10 + (timing ? timingScore(c.text) : 0);
+      return terms.filter(term => text.includes(term)).length * 10 +
+        (timing ? timingScore(c.text) : 0) + topicScore(question, c.text);
     };
     const rank = list => list.map(c => ({ ...c, hits: score(c) }))
       .sort((a, b) => b.hits - a.hits || a.start - b.start);
     // Keep the status/edition/coverage warning in the context, then the actual provision.
     const cards = rank(owned.filter(c => /\/КАРТОЧКА\.md$/iu.test(c.file)));
     const full = rank(owned.filter(c => /\/Текст_для_чтения\.html?$/iu.test(c.file) ||
-      /\/Части\/[^/]+\.html?$/iu.test(c.file)));
+      /\/Части\/[^/]+\.html?$/iu.test(c.file) || /\/Источник_карточка\.html?$/iu.test(c.file)));
     add(cards[0]);
-    add(full[0]);
+    if (ids.length === 1 || full[0]?.hits > 0) add(full[0]);
     if (ids.length === 1) {
       // Do not fill remaining context with nav/news or unrelated articles.
       if (full[1]?.hits > 0) add(full[1]);

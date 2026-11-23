@@ -30,6 +30,8 @@ test('Telegram defaults deny all/offline; requires its own IDs and explicit LLM 
   }
   assert.throws(() => telegramConfiguration({ ...env, LLM_MODEL: 'other-model' }, { live: true }));
   assert.throws(() => telegramConfiguration({ ...env, LLM_MAX_TOKENS: '1401' }, { live: true }));
+  assert.equal(telegramConfiguration({ ...env, LLM_MODEL: 'openai/gpt-4o-mini' },
+    { live: true }).llm.model, 'openai/gpt-4o-mini');
   assert.deepEqual(c.allowed, ['123456789', '987654321']);
   assert.equal(env.RUN_MODE, 'offline');
 });
@@ -171,6 +173,54 @@ test('existing retrieval + Hubris grounding is used, missing sources do not call
   q.add(authorizeTelegram(u, c));
   for (let i = 0; i < 5; i++) await idle();
   assert.equal(llmCalls, 1); assert.equal(sent[1].text, REFUSAL);
+});
+
+test('missing local source can return official publication without calling LLM', async () => {
+  const sent = []; let llmCalls = 0; let officialCalls = 0;
+  const q = makeTelegramQueue(c, { chunks: [] }, {
+    api: async (_method, payload) => sent.push(payload.text),
+    llmTransport: async () => { llmCalls++; throw new Error('unexpected'); },
+    officialSearch: async question => {
+      officialCalls++; assert.equal(question, 'Найди приказ Минздрава № 100');
+      return { status: 'ok', checkedAt: '2026-11-23T00:00:00.000Z', items: [{
+        eoNumber: '0001202611010001',
+        complexName: 'Приказ Министерства здравоохранения Российской Федерации № 100',
+        published: '2026-11-01T00:00:00.000Z',
+        url: 'https://publication.pravo.gov.ru/document/0001202611010001',
+      }] };
+    },
+  });
+  q.add(authorizeTelegram(update(123456789, 'Найди приказ Минздрава № 100'), c));
+  for (let i = 0; i < 5; i++) await idle();
+  assert.equal(officialCalls, 1);
+  assert.equal(llmCalls, 0);
+  assert.match(sent[0], /Проверка по официальному источнику/);
+  assert.match(sent[0], /не подтверждает текущий статус/);
+});
+
+test('grounding refusal falls back to clearly labelled general pharma consultation', async () => {
+  const quote = 'Настоящий Федеральный закон регулирует отношения в установленной сфере обращения.';
+  const chunks = chunksOf(quote, 'Законы/61-ФЗ_2010/КАРТОЧКА.md');
+  const sent = []; let llmCalls = 0;
+  const q = makeTelegramQueue(c, { chunks }, {
+    generalConsultation: true,
+    api: async (_method, payload) => sent.push(payload.text),
+    llmTransport: async () => {
+      llmCalls++;
+      if (llmCalls === 1) return new Response(JSON.stringify({ choices: [{
+        finish_reason: 'stop', message: { content: '{"claims":[]}' },
+      }] }));
+      return new Response(JSON.stringify({ choices: [{
+        finish_reason: 'stop', message: { content: JSON.stringify({ answer:
+          'Для оценки ситуации сначала определите вид продукции, стадию обращения и конкретное действие предприятия. Затем сопоставьте документы по качеству, регистрации и лицензированию. Для точного вывода нужны реквизиты акта и описание операции.' }) },
+      }] }));
+    },
+  });
+  q.add(authorizeTelegram(update(123456789, 'Что учитывать фармзаводу по 61-ФЗ?'), c));
+  for (let i = 0; i < 8; i++) await idle();
+  assert.equal(llmCalls, 2);
+  assert.match(sent[0], /^Общая консультация \(без подтверждения актуальной редакции\)/);
+  assert.doesNotMatch(sent[0], /не нашлось дословной формулировки/);
 });
 
 test('polling acknowledges ignored updates via offset; no webhook mutation or automatic sends', async () => {

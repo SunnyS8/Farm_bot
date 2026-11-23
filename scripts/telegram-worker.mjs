@@ -42,7 +42,7 @@ async function worker() {
     await writeFile(statusFile, JSON.stringify({ status: 'starting', pid: process.pid }));
     // Narrow runtime overrides only. Never edit/print the actual .env or provider key.
     const c = telegramConfiguration({ ...process.env, RUN_MODE: 'offline',
-      LLM_MODEL: 'dots-studio/dots-3-note-preview:free', LLM_MAX_TOKENS: '1400' }, { live: true });
+      LLM_MODEL: 'openai/gpt-4o-mini', LLM_MAX_TOKENS: '1400' }, { live: true });
     if (c.accessMode !== 'public') throw new Error('telegram_public_required');
     await runTelegram(c, { consent: true, paidConsent: true, expectedUsername: 'zakfarm26_bot',
       signal: controller.signal, onError: () => console.error('telegram_job_failed'),

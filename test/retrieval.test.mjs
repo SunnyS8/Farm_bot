@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lawIds, loadCorpus, search, chunksOf } from '../src/retrieval.mjs';
+import { actIds, lawIds, loadCorpus, search, chunksOf } from '../src/retrieval.mjs';
 import { inspectAnswer, renderAnswer, generate, REFUSAL } from '../src/adapters.mjs';
 import { configuration } from '../src/config.mjs';
-import { answerActStructure, asksForActStructure } from '../src/legal-answers.mjs';
+import { answerActStructure, answerRrpp, asksForActStructure } from '../src/legal-answers.mjs';
 
 const folder = 'Будущие нормы/08_331-ФЗ_2026';
 const card = '# Федеральный закон № 331-ФЗ\nСтатус: НЕ ВСТУПИЛ В СИЛУ. См. сроки и исключения.\n' +
@@ -49,6 +49,16 @@ test('legal structure mode lists every article deterministically without an LLM'
 test('exact law identity normalizes unicode dashes, not adjacent numbers/types', () => {
   assert.deepEqual(lawIds('№ 331‑ФЗ, 331 – ФЗ; 1331-ФЗ и 331-ФКЗ'), ['331-фз', '1331-фз', '331-фкз']);
   assert.deepEqual(lawIds('331-ФЗabc 331-ФЗ2 abc331-ФЗ'), []);
+});
+
+test('cross-act identity recognizes laws and government decisions', () => {
+  assert.deepEqual(actIds('44-ФЗ с учётом ПП РФ № 719 и ПП № 1875'),
+    ['44-фз', 'пп-719', 'пп-1875']);
+  assert.deepEqual(actIds('44-ФЗ с учётом ПП РФ № 719 и № 1875'),
+    ['44-фз', 'пп-719', 'пп-1875']);
+  assert.deepEqual(actIds('Постановление Правительства Российской Федерации от 17.07.2015 № 719'),
+    ['пп-719']);
+  assert.deepEqual(actIds('товар 719 и запись 1875'), []);
 });
 
 test('regression: Когда вступит в силу 331-ФЗ? selects own card then full commencement provision', () => {
@@ -149,4 +159,26 @@ test('actual vault regression: own card and article 7 with both commencement rul
       sourceId: statute.sourceId, quote }] });
     assert.equal(inspectAnswer(content, result).reason, 'grounded');
     assert.notEqual(renderAnswer(content, result), REFUSAL);
+});
+
+test('actual vault regression: cross-document RРПП question selects 44-FZ, PP 719 and PP 1875',
+  { skip: process.platform !== 'win32' }, async () => {
+    const { chunks } = await loadCorpus();
+    const result = search(chunks,
+      'Как проверить товар в РРПП при закупке по 44-ФЗ с учётом ПП РФ № 719 и ПП РФ № 1875?');
+    assert.ok(result.length >= 5 && result.length <= 6);
+    assert.ok(result.some(source => source.file.startsWith('Законы/11_44-ФЗ_2013/')));
+    assert.ok(result.some(source => source.file.startsWith('Постановления/03_ПП_719_2015/')));
+    assert.ok(result.some(source => source.file.startsWith('Постановления/04_ПП_1875_2024/')));
+  });
+
+test('actual vault regression: deterministic RРПП answer covers registry, proof and 44-FZ',
+  { skip: process.platform !== 'win32' }, async () => {
+    const { chunks } = await loadCorpus();
+    const answer = answerRrpp(chunks,
+      'Как проверить товар в РРПП и использовать запись при закупке по 44-ФЗ?');
+    assert.match(answer, /gisp\.gov\.ru\/pp719v2\/pub\/prod/);
+    assert.match(answer, /подтверждением происхождения служит номер реестровой записи/);
+    assert.match(answer, /закупки по 44-ФЗ/);
+    assert.match(answer, /приложения 2 и 3 обрезаны/);
   });

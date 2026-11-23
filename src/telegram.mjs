@@ -2,14 +2,22 @@ import { pathToFileURL } from 'node:url';
 import { configuration } from './config.mjs';
 import { WorkQueue } from './security.mjs';
 import { loadCorpus, search } from './retrieval.mjs';
-import { generate, DISCLAIMER } from './adapters.mjs';
-import { answerActStructure } from './legal-answers.mjs';
+import { generateCompound, generateGeneralConsultation, generateGeneralDefinition,
+  DISCLAIMER, REFUSAL } from './adapters.mjs';
+import { answerActStructure, answerRrpp } from './legal-answers.mjs';
 import { createConversationMemory } from './conversation.mjs';
+import { glossaryAnswer, isDefinitionQuestion } from './legal-glossary.mjs';
+import { needsOfficialSearch, renderOfficialSearch, searchOfficialPublications } from './official-search.mjs';
 
-export const GREETING = `Привет! Помогу разобраться с нормативной базой Эском по локальному сбору.
+export const GREETING = `Привет! Я консультант фармзавода Эском по регуляторике РФ и ЕАЭС, закупкам и локализации.
 
-Напишите номер акта, статью или вопрос — найду точную цитату и источник.
+Сначала проверю локальный нормативный сбор, а при необходимости — официальный портал правовой информации. Напишите номер акта, статью или вопрос.
 Справочно, не юридическое заключение: перед применением сверьтесь с юристом.`;
+
+export const TELEGRAM_LLM_MODELS = Object.freeze([
+  'openai/gpt-4o-mini',
+  'dots-studio/dots-3-note-preview:free',
+]);
 
 const numericId = value => Number.isSafeInteger(value) && value > 0 ? String(value) : '';
 const updateId = value => Number.isSafeInteger(value) && value >= 0 && value < Number.MAX_SAFE_INTEGER;
@@ -32,7 +40,7 @@ export function telegramConfiguration(env = process.env, { live = false } = {}) 
     // No hidden provider/model choice, and no paid fallback.
     if (llm.protocol !== 'openai-chat-completions' || !llm.provider ||
         llm.endpoint !== 'https://api.hubris.pw/v1/chat/completions' ||
-        llm.model !== 'dots-studio/dots-3-note-preview:free' || !llm.apiKey || llm.maxTokens > 1400)
+        !TELEGRAM_LLM_MODELS.includes(llm.model) || !llm.apiKey || llm.maxTokens > 1400)
       throw new Error('telegram_llm_configuration_incomplete');
   }
   return Object.freeze({ mode, accessMode,
@@ -98,7 +106,9 @@ export function telegramClient(c, { transport = fetch, signal, readOnly = false 
 }
 
 export function makeTelegramQueue(c, corpus, { api, llmTransport = fetch, signal,
-  onError = () => {}, conversation = createConversationMemory() } = {}) {
+  onError = () => {}, conversation = createConversationMemory(),
+  officialSearch = async () => ({ status: 'disabled', items: [] }),
+  generalConsultation = false } = {}) {
   if (c.mode !== 'live' || (c.accessMode !== 'public' && !c.allowed.length)) throw new Error('telegram_live_required');
   return new WorkQueue(async job => {
     if (signal?.aborted || !permits(c, job.sender)) return;
@@ -114,12 +124,28 @@ export function makeTelegramQueue(c, corpus, { api, llmTransport = fetch, signal
     else if (job.question.startsWith('/')) answer = 'Напишите нормативный вопрос текстом, например номер акта и статью.';
     else {
       const contextualQuestion = conversation.contextualize(job.sender, job.question);
-      answer = answerActStructure(corpus.chunks, contextualQuestion);
+      answer = glossaryAnswer(contextualQuestion) ||
+        answerRrpp(corpus.chunks, contextualQuestion) ||
+        answerActStructure(corpus.chunks, contextualQuestion);
       if (!answer) {
         const sources = search(corpus.chunks, contextualQuestion);
-        answer = await generate(c.llm, contextualQuestion, sources, llmTransport,
-          diagnostic => { if (diagnostic.reason !== 'grounded') console.error(`telegram_llm_${diagnostic.reason}`); },
-          { publicSources: c.accessMode === 'public' });
+        const checkOfficial = needsOfficialSearch(job.question, sources.length > 0) &&
+          !isDefinitionQuestion(job.question);
+        const official = checkOfficial ? await officialSearch(job.question) : null;
+        if (!sources.length && official?.status === 'ok' && official.items.length) {
+          answer = `${renderOfficialSearch(official)}\n\nСправочно.`;
+        } else if (!sources.length && isDefinitionQuestion(job.question)) {
+          answer = await generateGeneralDefinition(c.llm, job.question, llmTransport) || REFUSAL;
+        } else {
+          answer = await generateCompound(c.llm, contextualQuestion, sources, llmTransport,
+            diagnostic => { if (diagnostic.reason !== 'grounded') console.error(`telegram_llm_${diagnostic.reason}`); },
+            { publicSources: c.accessMode === 'public' });
+          if (answer === REFUSAL && generalConsultation)
+            answer = await generateGeneralConsultation(c.llm, job.question, llmTransport) || REFUSAL;
+          const verification = renderOfficialSearch(official, { limit: 2 });
+          if (verification && answer.length + verification.length + 2 <= 4096)
+            answer = `${answer}\n\n${verification}`;
+        }
       }
     }
     if (signal?.aborted) return;
@@ -156,7 +182,9 @@ export async function runTelegram(c, { consent = false, paidConsent = false, tra
   if (!webhook || typeof webhook.url !== 'string') throw new Error('telegram_invalid_webhook_state');
   if (webhook.url) throw new Error('telegram_existing_webhook');
   const corpus = await corpusLoader();
-  const queue = makeTelegramQueue(c, corpus, { api, llmTransport, signal, onError });
+  const queue = makeTelegramQueue(c, corpus, { api, llmTransport, signal, onError,
+    officialSearch: question => searchOfficialPublications(question),
+    generalConsultation: true });
   await onReady();
   let offset = 0;
   while (!signal?.aborted) {
