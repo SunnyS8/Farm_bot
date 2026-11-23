@@ -3,11 +3,12 @@ import { configuration } from './config.mjs';
 import { WorkQueue } from './security.mjs';
 import { loadCorpus, search } from './retrieval.mjs';
 import { generate, DISCLAIMER } from './adapters.mjs';
+import { answerActStructure } from './legal-answers.mjs';
 
-export const GREETING = `Здравствуйте! Я консультант по локальной нормативной базе Эском. Укажите номер акта, статью или вопрос. Отвечаю только по найденным источникам с цитатами.
-Пилот может быть публичным; группы не поддерживаются. Число обращений к ИИ ограничено.
-Вопросы проходят через Telegram и Hubris; цитаты документов также попадут в Telegram. Не отправляйте персональные данные и корпоративные секреты. Использование Telegram должно быть отдельно согласовано вашей организацией.
-${DISCLAIMER}`;
+export const GREETING = `Привет! Помогу разобраться с нормативной базой Эском по локальному сбору.
+
+Напишите номер акта, статью или вопрос — найду точную цитату и источник.
+Справочно, не юридическое заключение: перед применением сверьтесь с юристом.`;
 
 const numericId = value => Number.isSafeInteger(value) && value > 0 ? String(value) : '';
 const updateId = value => Number.isSafeInteger(value) && value >= 0 && value < Number.MAX_SAFE_INTEGER;
@@ -30,7 +31,7 @@ export function telegramConfiguration(env = process.env, { live = false } = {}) 
     // No hidden provider/model choice, and no paid fallback.
     if (llm.protocol !== 'openai-chat-completions' || !llm.provider ||
         llm.endpoint !== 'https://api.hubris.pw/v1/chat/completions' ||
-        llm.model !== 'openai/gpt-4o-mini' || !llm.apiKey || llm.maxTokens > 1400)
+        llm.model !== 'dots-studio/dots-3-note-preview:free' || !llm.apiKey || llm.maxTokens > 1400)
       throw new Error('telegram_llm_configuration_incomplete');
   }
   return Object.freeze({ mode, accessMode,
@@ -42,7 +43,7 @@ export function privateMessage(update, now = Date.now()) {
   const m = update?.message;
   if (!updateId(update?.update_id) || !m || m.chat?.type !== 'private' ||
       m.from?.is_bot !== false || !numericId(m.from?.id) || m.chat.id !== m.from.id ||
-      !numericId(m.message_id) || m.sender_chat || m.forward_origin || m.forward_from || m.via_bot ||
+      !numericId(m.message_id) || m.sender_chat || m.via_bot ||
       !Number.isSafeInteger(m.date) || Math.abs(now / 1000 - m.date) > 300 ||
       typeof m.text !== 'string' || !m.text.trim() || m.text.length > 2000) return null;
   return Object.freeze({ sender: String(m.from.id), messageId: String(m.message_id),
@@ -69,7 +70,7 @@ export function telegramClient(c, { transport = fetch, signal, readOnly = false 
     if (method === 'sendMessage' && (c.mode !== 'live' ||
         !permits(c, numericId(payload.chat_id)) || typeof payload.text !== 'string' ||
         !payload.text.trim() || payload.text.length > 4096 || payload.allow_paid_broadcast === true ||
-        payload.parse_mode !== undefined))
+        payload.parse_mode !== undefined || payload.protect_content === true))
       throw new Error('telegram_send_denied');
     try {
       const response = await transport(`https://api.telegram.org/bot${c.token}/${method}`, {
@@ -101,18 +102,22 @@ export function makeTelegramQueue(c, corpus, { api, llmTransport = fetch, signal
   return new WorkQueue(async job => {
     if (signal?.aborted || !permits(c, job.sender)) return;
     let answer;
-    if (job.question === '/start') answer =
-      (c.accessMode === 'public' ? 'Это общедоступный пилот, только личные чаты.\n' : '') + GREETING;
+    if (job.question === '/start') answer = GREETING;
     else if (job.question.startsWith('/')) answer = 'Напишите нормативный вопрос текстом, например номер акта и статью.';
     else {
-      const sources = search(corpus.chunks, job.question);
-      answer = await generate(c.llm, job.question, sources, llmTransport, () => {},
-        { publicSources: c.accessMode === 'public' });
+      answer = answerActStructure(corpus.chunks, job.question);
+      if (!answer) {
+        const sources = search(corpus.chunks, job.question);
+        answer = await generate(c.llm, job.question, sources, llmTransport,
+          diagnostic => { if (diagnostic.reason !== 'grounded') console.error(`telegram_llm_${diagnostic.reason}`); },
+          { publicSources: c.accessMode === 'public' });
+      }
     }
     if (signal?.aborted) return;
     if (answer.length > 4096) answer = `Ответ с источниками превышает лимит одного сообщения. Уточните статью или сузьте вопрос.\n\n${DISCLAIMER}`;
     await api('sendMessage', { chat_id: Number(job.sender), text: answer,
-      link_preview_options: { is_disabled: true }, protect_content: true });
+      protect_content: false,
+      link_preview_options: { is_disabled: true } });
   }, { max: 20, onError, rateLimit: null, sessionLimit: null });
 }
 

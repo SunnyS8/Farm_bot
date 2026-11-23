@@ -9,7 +9,7 @@ const env = {
   RUN_MODE: 'offline', TELEGRAM_BOT_TOKEN: '123456:synthetic_token_not_real_12345678',
   TELEGRAM_ALLOWED_USER_IDS: '123456789,987654321',
   LLM_PROTOCOL: 'openai-chat-completions', LLM_PROVIDER: 'Hubris',
-  LLM_ENDPOINT: 'https://api.hubris.pw/v1/chat/completions', LLM_MODEL: 'openai/gpt-4o-mini',
+  LLM_ENDPOINT: 'https://api.hubris.pw/v1/chat/completions', LLM_MODEL: 'dots-studio/dots-3-note-preview:free',
   LLM_API_KEY: 'synthetic-llm-key', LLM_MAX_TOKENS: '1400',
 };
 const c = telegramConfiguration(env, { live: true });
@@ -34,14 +34,13 @@ test('Telegram defaults deny all/offline; requires its own IDs and explicit LLM 
   assert.equal(env.RUN_MODE, 'offline');
 });
 
-test('private text authorization rejects strangers, Bitrix IDs, groups, bots, forwarded/stale data', () => {
+test('private text authorization rejects strangers, Bitrix IDs, groups, bots, via-bot/stale data', () => {
   assert.equal(authorizeTelegram(update(123456789, '331-ФЗ', now), c, now).sender, '123456789');
   for (const id of [835, 626, 1]) assert.equal(authorizeTelegram(update(id, '/start', now), c, now), null);
   for (const mutate of [
     u => { u.message.chat.type = 'group'; },
     u => { u.message.chat.id = 987654321; },
     u => { u.message.from.is_bot = true; },
-    u => { u.message.forward_origin = { type: 'user' }; },
     u => { u.message.via_bot = { id: 2 }; },
     u => { u.message.sender_chat = {}; },
     u => { u.message.date -= 301; },
@@ -52,6 +51,18 @@ test('private text authorization rejects strangers, Bitrix IDs, groups, bots, fo
   ]) {
     const u = update(123456789, '/start', now); mutate(u);
     assert.equal(privateMessage(u, now), null);
+  }
+});
+
+test('forwarded private text is accepted with the forwarding user as sender', () => {
+  for (const mutate of [
+    u => { u.message.forward_origin = { type: 'user', sender_user: { id: 999 } }; },
+    u => { u.message.forward_from = { id: 999, is_bot: false }; },
+  ]) {
+    const u = update(123456789, '331-ФЗ', now); mutate(u);
+    const job = authorizeTelegram(u, c, now);
+    assert.equal(job.sender, '123456789');
+    assert.equal(job.question, '331-ФЗ');
   }
 });
 
@@ -110,6 +121,7 @@ test('sendMessage rechecks allowed recipient, length and plain-text payload with
   await assert.rejects(() => api('sendMessage', { chat_id: 123456789, text: 'x'.repeat(4097) }));
   await assert.rejects(() => api('sendMessage', { chat_id: 123456789, text: 'paid', allow_paid_broadcast: true }));
   await assert.rejects(() => api('sendMessage', { chat_id: 123456789, text: 'markup', parse_mode: 'HTML' }));
+  await assert.rejects(() => api('sendMessage', { chat_id: 123456789, text: 'protected', protect_content: true }));
   await assert.rejects(() => api('getFile', {}));
   assert.equal(requests.length, 0);
 });
@@ -130,8 +142,10 @@ test('authorized /start uses bounded queue without LLM; strangers never get gree
   assert.equal(requests[0].parse_mode, undefined);
   assert.equal(requests[0].allow_paid_broadcast, undefined);
   assert.deepEqual(requests[0].link_preview_options, { is_disabled: true });
-  assert.equal(requests[0].protect_content, true);
-  assert.ok(GREETING.includes('Telegram и Hubris'));
+  assert.equal(requests[0].protect_content, false);
+  assert.ok(GREETING.includes('Привет!'));
+  assert.ok(!GREETING.includes('общедоступный пилот'));
+  assert.ok(!GREETING.includes('Telegram и Hubris'));
 });
 
 test('existing retrieval + Hubris grounding is used, missing sources do not call LLM', async () => {
@@ -143,7 +157,7 @@ test('existing retrieval + Hubris grounding is used, missing sources do not call
     llmTransport: async (_, options) => {
       llmCalls++;
       const payload = JSON.parse(options.body);
-      assert.equal(payload.model, 'openai/gpt-4o-mini'); assert.equal(payload.max_tokens, 1400);
+      assert.equal(payload.model, 'dots-studio/dots-3-note-preview:free'); assert.equal(payload.max_tokens, 1400);
       return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: {
         content: JSON.stringify({ claims: [{ text: 'Срок указан в законе.', sourceId: 'S1', quote }] }),
       } }] }));
@@ -152,7 +166,7 @@ test('existing retrieval + Hubris grounding is used, missing sources do not call
   q.add(authorizeTelegram(update(123456789, '331-ФЗ'), c));
   for (let i = 0; i < 5; i++) await idle();
   assert.equal(llmCalls, 1); assert.equal(sent.length, 1);
-  assert.ok(sent[0].text.includes(quote)); assert.ok(sent[0].text.includes('не является юридическим заключением'));
+  assert.ok(sent[0].text.includes(quote)); assert.ok(sent[0].text.includes('Справочно.'));
   const u = update(987654321, '999999-ФЗ'); u.message.message_id = 6;
   q.add(authorizeTelegram(u, c));
   for (let i = 0; i < 5; i++) await idle();

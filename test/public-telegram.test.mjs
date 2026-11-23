@@ -10,7 +10,7 @@ import { officialLinks } from '../src/public-sources.mjs';
 const env = { RUN_MODE: 'offline', TELEGRAM_ACCESS_MODE: 'public',
   TELEGRAM_BOT_TOKEN: '123456:synthetic_token_not_real_12345678',
   LLM_PROTOCOL: 'openai-chat-completions', LLM_PROVIDER: 'Hubris',
-  LLM_ENDPOINT: 'https://api.hubris.pw/v1/chat/completions', LLM_MODEL: 'openai/gpt-4o-mini',
+  LLM_ENDPOINT: 'https://api.hubris.pw/v1/chat/completions', LLM_MODEL: 'dots-studio/dots-3-note-preview:free',
   LLM_API_KEY: 'synthetic-key', LLM_MAX_TOKENS: '1400' };
 const c = telegramConfiguration(env, { live: true });
 const question = 'Когда вступит в силу 331-ФЗ?';

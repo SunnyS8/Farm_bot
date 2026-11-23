@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { lawIds, loadCorpus, search, chunksOf } from '../src/retrieval.mjs';
 import { inspectAnswer, renderAnswer, generate, REFUSAL } from '../src/adapters.mjs';
 import { configuration } from '../src/config.mjs';
+import { answerActStructure, asksForActStructure } from '../src/legal-answers.mjs';
 
 const folder = 'Будущие нормы/08_331-ФЗ_2026';
 const card = '# Федеральный закон № 331-ФЗ\nСтатус: НЕ ВСТУПИЛ В СИЛУ. См. сроки и исключения.\n' +
@@ -23,6 +24,27 @@ const corpus = [
   ...chunksOf('Новости, когда совокупность сделок расценивается как антиконкурентное соглашение.'.repeat(2),
     `${folder}/Источник_карточка.html`),
 ];
+
+test('legal structure mode lists every article deterministically without an LLM', () => {
+  const synthetic = [];
+  for (let number = 1; number <= 3; number++) {
+    const body = number < 3
+      ? `Статья ${number}\nВнести в Федеральный закон от 1 января 2020 года № ${number}00-ФЗ "Тестовый закон ${number}" следующие изменения.`
+      : 'Статья 3\nНастоящий Федеральный закон вступает в силу с 1 марта 2090 года. Статья 5 настоящего Федерального закона вступает в силу с 1 декабря 2089 года.';
+    synthetic.push(...chunksOf(body, `${folder}/Части/${String(number).padStart(3, '0')}.html`));
+  }
+  synthetic.push(...chunksOf(
+    'Федеральный закон от 04.08.2026 № 331-ФЗ "О тестовых изменениях"\nhttps://publication.pravo.gov.ru/document/0000000000000000',
+    `${folder}/КАРТОЧКА.md`,
+  ));
+  const question = 'Федеральный закон от 04.08.2026 № 331-ФЗ. Перечисли все статьи.';
+  assert.equal(asksForActStructure(question), true);
+  const answer = answerActStructure(synthetic, question);
+  assert.match(answer, /В локальной копии закона 3 статьи/);
+  assert.match(answer, /Статья 1 — изменения в Федеральный закон № 100-ФЗ/);
+  assert.match(answer, /Статья 3 — сроки вступления/);
+  assert.match(answer, /publication\.pravo\.gov\.ru/);
+});
 
 test('exact law identity normalizes unicode dashes, not adjacent numbers/types', () => {
   assert.deepEqual(lawIds('№ 331‑ФЗ, 331 – ФЗ; 1331-ФЗ и 331-ФКЗ'), ['331-фз', '1331-фз', '331-фкз']);

@@ -16,12 +16,27 @@ test('NBSP and Unicode whitespace canonicalization restores original source span
   assert.equal(claim.quote, original);
   assert.equal(sources[0].text.slice(claim.quoteStart, claim.quoteEnd), original);
   const rendered = renderAnswer(content(body), sources);
-  assert.ok(rendered.includes(`Цитата: «${original}»`));
-  assert.ok(!rendered.includes(`Цитата: «${body}»`));
+  assert.ok(rendered.includes(`Дословная цитата: «${original}»`));
+  assert.ok(!rendered.includes(`Дословная цитата: «${body}»`));
   for (const ws of [' ', '\u00a0', '\u202f', '\t', '\r\n', '\n\n ']) {
     const variant = body.replaceAll(' ', ws);
     assert.equal(inspectAnswer(content(body), source(variant)).claims[0].quote, variant);
   }
+});
+
+test('ungrounded claims are dropped while grounded claims survive', () => {
+  const mixed = JSON.stringify({ claims: [
+    { text: 'Точная выдержка', sourceId: 'S1', quote: body },
+    { text: 'Выдуманная выдержка', sourceId: 'S1', quote: 'Нет такой цитаты '.repeat(5) },
+  ] });
+  const checked = inspectAnswer(mixed, source(body));
+  assert.equal(checked.ok, true);
+  assert.equal(checked.reason, 'grounded');
+  assert.equal(checked.dropped, 1);
+  assert.equal(checked.claims.length, 1);
+  assert.equal(checked.claims[0].quote, body);
+  assert.ok(renderAnswer(mixed, source(body)).includes('Точная выдержка'));
+  assert.ok(!renderAnswer(mixed, source(body)).includes('Выдуманная выдержка'));
 });
 
 test('multiline matching is continuous and maps UTF-16 indexes including an astral prefix', () => {
